@@ -9,6 +9,8 @@ import { NotificationService } from './notifications.service';
 import { PreferenceService } from './preference.service';
 import { EmailSender } from './senders/email.sender';
 import { WebhookSender } from './senders/webhook.sender';
+import { User } from '../modules/user/entities/user.entity';
+import { DigestService } from './digest.service';
 import { EmailModule } from '../email/email.module';
 import { EventsModule } from '../gateways/events.module';
 
@@ -18,12 +20,13 @@ import { EventsModule } from '../gateways/events.module';
     forwardRef(() => AuthModule),
     EmailModule,
     EventsModule,
-    TypeOrmModule.forFeature([Notification, NotificationPreference]),
+    TypeOrmModule.forFeature([Notification, NotificationPreference, User]),
   ],
   controllers: [NotificationController],
   providers: [
     NotificationService,
     PreferenceService,
+    DigestService,
     EmailSender,
     WebhookSender,
   ],

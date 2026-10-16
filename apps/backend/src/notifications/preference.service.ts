@@ -70,6 +70,10 @@ export class PreferenceService {
         pref.soundEnabled = update.soundEnabled;
       }
 
+      if (update.digestEnabled !== undefined) {
+        pref.digestEnabled = update.digestEnabled;
+      }
+
       const saved = await this.repo.save(pref);
       results.push(saved);
     }

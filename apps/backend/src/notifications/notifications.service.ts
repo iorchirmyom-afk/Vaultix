@@ -105,6 +105,10 @@ export class NotificationService {
           if (!pref.enabled) continue;
           if (!pref.eventTypes.includes(notification.eventType)) continue;
 
+          // Digest users receive email in the daily batch, not per event
+          if (pref.channel === NotificationChannel.EMAIL && pref.digestEnabled)
+            continue;
+
           const sender = this.senders.get(pref.channel);
           if (!sender) continue;
 

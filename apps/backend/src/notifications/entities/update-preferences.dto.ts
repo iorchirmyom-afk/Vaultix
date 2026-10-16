@@ -17,4 +17,8 @@ export class UpdatePreferencesDto {
   @IsOptional()
   @IsBoolean()
   soundEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  digestEnabled?: boolean;
 }
