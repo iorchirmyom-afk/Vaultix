@@ -1,15 +1,18 @@
 {
   "default_branch": "main",
   "branches": [
-    "fix/issue-554-mobile-replace-emoji-tab-icon-stubs-with-real",
-    "main"
+    "fix/issue-833-backend-structured-request-logging-with",
+    "main",
+    "origin"
   ],
   "parent": {
-    "fix/issue-554-mobile-replace-emoji-tab-icon-stubs-with-real": "main",
-    "main": null
+    "fix/issue-833-backend-structured-request-logging-with": "main",
+    "main": null,
+    "origin": "main"
   },
   "order": [
     "main",
-    "fix/issue-554-mobile-replace-emoji-tab-icon-stubs-with-real"
+    "fix/issue-833-backend-structured-request-logging-with",
+    "origin"
   ]
 }
