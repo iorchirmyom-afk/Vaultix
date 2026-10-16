@@ -42,6 +42,9 @@ export class Notification {
   @Column({ type: DATETIME_COLUMN_TYPE, nullable: true })
   readAt?: Date;
 
+  @Column({ type: DATETIME_COLUMN_TYPE, nullable: true })
+  digestedAt?: Date;
+
   @Column({ nullable: true })
   @Index({ unique: true })
   idempotencyKey?: string;
