@@ -1,4 +1,5 @@
-import { Module, forwardRef, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { validateJwtSecret } from './modules/auth/services/jwt-validation.util';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
@@ -57,8 +58,8 @@ import { ApiV2Module } from './modules/versioning/api-v2.module';
 import { BackupModule } from './modules/backup/backup.module';
 import { BackupRecord } from './modules/backup/entities/backup-record.entity';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
-import { RequestLoggingMiddleware } from './middleware/request-logging.middleware';
 import { redactLogPaths } from './common/logging/redact.util';
+import { RequestLoggingMiddleware } from './middleware/request-logging.middleware';
 
 @Module({
   imports: [
@@ -70,25 +71,14 @@ import { redactLogPaths } from './common/logging/redact.util';
           pinoHttp: {
             level: config.get('LOG_LEVEL', 'info'),
             genReqId: (req) => {
-              const header = req.headers['x-request-id'];
-              const requestId = Array.isArray(header) ? header[0] : header;
-              const id = requestId || crypto.randomUUID();
-              (req as { id?: string }).id = id;
-              return id;
+              return req.headers['x-request-id'] || crypto.randomUUID();
             },
             customProps: (req) => ({
-              requestId: (req as { id?: string }).id,
+              requestId: (req as any).id,
             }),
             redact: {
               paths: redactLogPaths,
               censor: '[REDACTED]',
-            },
-            serializers: {
-              req: (req: { id?: string; method?: string; url?: string }) => ({
-                id: req.id,
-                method: req.method,
-                url: req.url,
-              }),
             },
             transport:
               config.get('NODE_ENV') !== 'production'
@@ -185,7 +175,7 @@ import { redactLogPaths } from './common/logging/redact.util';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestContextMiddleware).forRoutes('*');
     consumer.apply(RequestLoggingMiddleware).forRoutes('*');
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
   }
 }

@@ -7,6 +7,7 @@ import * as express from 'express';
 import { AppModule } from './app.module';
 import { ApiVersionMiddleware } from './middleware/api-version.middleware';
 import { RequestLoggingMiddleware } from './middleware/request-logging.middleware';
+import { CorrelationExceptionFilter } from './filters/correlation-exception.filter';
 import {
   EscrowV2Controller,
   AuthV2Controller,
@@ -51,7 +52,9 @@ async function bootstrap() {
       'Accept',
       'Authorization',
       'X-Requested-With',
+      'X-Request-Id',
     ],
+    exposedHeaders: ['X-Request-Id'],
   });
 
   // Security headers via helmet (applied first for all responses)
@@ -100,25 +103,13 @@ async function bootstrap() {
 
   // Body size limit enforcement (10MB)
   app.use(express.json({ limit: '10mb' }));
-
-  // Request logging with correlation IDs (applied before API version middleware)
-  const requestLoggingMiddleware = new RequestLoggingMiddleware();
-  app.use(requestLoggingMiddleware.use.bind(requestLoggingMiddleware));
-
   // API version negotiation middleware
   // Rewrites unversioned requests to /v1/... and adds Sunset headers
   const apiVersionMiddleware = new ApiVersionMiddleware();
   app.use(apiVersionMiddleware.use.bind(apiVersionMiddleware));
 
-  // Enable global validation
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    }),
-  );
-
+  // Global exception filter that includes the correlation ID in error responses
+  app.useGlobalFilters(new CorrelationExceptionFilter());
   // Swagger UI with version selector
   // v1 document (current stable API)
   const v1Config = new DocumentBuilder()

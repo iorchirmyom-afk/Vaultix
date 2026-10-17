@@ -1,9 +1,8 @@
 import { Injectable, NestMiddleware, Logger } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
-import * as crypto from 'node:crypto';
+import * as crypto from 'crypto';
 import { sanitizeBody } from './body-sanitizer.util';
-import { runWithContext } from '../utils/logger.util';
-import { redactSensitiveData } from './request-context';
+import { runWithContext, redactSecrets } from '../utils/logger.util';
 
 const SLOW_REQUEST_THRESHOLD_MS = Number(
   process.env.REQUEST_LOG_SLOW_THRESHOLD_MS || 5000,
@@ -26,25 +25,26 @@ const STATIC_FILE_EXTENSIONS =
 
 const MUTABLE_METHODS = new Set(['POST', 'PATCH', 'PUT']);
 
-const VALID_REQUEST_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+const REQUEST_ID_HEADER = 'x-request-id';
 
-export interface CorrelatedRequest extends Request {
-  correlationId?: string;
-  id?: string;
-}
-
-@Injectable()
+@ijectable()
 export class RequestLoggingMiddleware implements NestMiddleware {
   private readonly logger = new Logger('RequestLogging');
 
   use(req: Request, res: Response, next: NextFunction): void {
     const path = (req.originalUrl || req.url).split('?')[0];
 
-    // Always assign/propagate a correlation ID and echo it back,
-    // even for skipped paths, so error responses can reference it.
-    const correlationId = this.resolveCorrelationId(req);
-    (req as CorrelatedRequest).correlationId = correlationId;
-    (req as CorrelatedRequest).id = correlationId;
+    // Always assign/propagate a correlation ID and response header,
+    // even for skipped paths, so error responses and outbound calls
+    // can reference it.
+    const incomingId = req.headers[REQUEST_ID_HEADER];
+    const correlationId =
+      (typeof incomingId === 'string' && incomingId.trim().length > 0
+        ? incomingId.trim()
+        : undefined) || crypto.randomUUID();
+
+    req['correlationId'] = correlationId;
+    (req as Request & { id: string }).id = correlationId;
     res.setHeader('X-Request-Id', correlationId);
 
     if (this.shouldSkip(path)) {
@@ -57,7 +57,7 @@ export class RequestLoggingMiddleware implements NestMiddleware {
       res.status(413).json({
         statusCode: 413,
         message: 'Request body too large',
-        requestId: correlationId,
+        correlationId,
       });
       this.logger.warn(
         JSON.stringify({
@@ -101,7 +101,7 @@ export class RequestLoggingMiddleware implements NestMiddleware {
     }
 
     if (isMutable && !isMultipart && req.body && typeof req.body === 'object') {
-      requestLog.body = redactSensitiveData(sanitizeBody(req.body));
+      requestLog.body = redactSecrets(sanitizeBody(req.body));
     }
 
     this.logger.log(JSON.stringify(requestLog));
@@ -140,14 +140,6 @@ export class RequestLoggingMiddleware implements NestMiddleware {
     });
 
     runWithContext({ correlationId, userId }, () => next());
-  }
-
-  private resolveCorrelationId(req: Request): string {
-    const incoming = req.headers['x-request-id'];
-    if (typeof incoming === 'string' && VALID_REQUEST_ID.test(incoming)) {
-      return incoming;
-    }
-    return crypto.randomUUID();
   }
 
   private shouldSkip(path: string): boolean {

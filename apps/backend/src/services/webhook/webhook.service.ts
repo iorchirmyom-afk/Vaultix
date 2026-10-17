@@ -171,14 +171,15 @@ export class WebhookService {
     let statusCode: number | null = null;
     let errorMsg: string | null = null;
 
+    const headers: Record<string, string> = {
+      'X-Vaultix-Signature': signature,
+      'Content-Type': 'application/json',
+    };
+    if (correlationId) {
+      headers['X-Request-Id'] = correlationId;
+    }
+
     try {
-      const headers: Record<string, string> = {
-        'X-Vaultix-Signature': signature,
-        'Content-Type': 'application/json',
-      };
-      if (correlationId) {
-        headers['X-Request-Id'] = correlationId;
-      }
       const response = await axios.post(webhook.url, payload, {
         headers,
         timeout: this.requestTimeoutMs,
@@ -187,12 +188,7 @@ export class WebhookService {
       delivery.status = WebhookDeliveryStatus.DELIVERED;
       delivery.nextRetryAt = null;
       this.logger.log(
-        JSON.stringify({
-          type: 'webhook_delivered',
-          correlationId,
-          url: webhook.url,
-          statusCode,
-        }),
+        `Webhook delivered to ${webhook.url}${correlationId ? ` [cid:${correlationId}]` : ''}`,
       );
     } catch (err: unknown) {
       if (typeof err === 'object' && err !== null && 'response' in err) {
@@ -214,27 +210,13 @@ export class WebhookService {
         delivery.nextRetryAt = new Date(Date.now() + backoffMs);
         delivery.attempt += 1;
         this.logger.warn(
-          JSON.stringify({
-            type: 'webhook_retry',
-            correlationId,
-            url: webhook.url,
-            attempt: delivery.attempt - 1,
-            maxAttempts: delivery.maxAttempts,
-            error: errorMsg,
-            backoffMs,
-          }),
+          `Webhook delivery failed (attempt ${delivery.attempt - 1}/${delivery.maxAttempts}) to ${webhook.url}: ${errorMsg}, retrying in ${backoffMs}ms${correlationId ? ` [cid:${correlationId}]` : ''}`,
         );
       } else {
         delivery.status = WebhookDeliveryStatus.DEAD_LETTERED;
         delivery.nextRetryAt = null;
         this.logger.error(
-          JSON.stringify({
-            type: 'webhook_dead_letter',
-            correlationId,
-            url: webhook.url,
-            attempts: delivery.attempt,
-            error: errorMsg,
-          }),
+          `Webhook delivery permanently failed after ${delivery.attempt} attempts to ${webhook.url}, moving to dead letter queue${correlationId ? ` [cid:${correlationId}]` : ''}`,
         );
         await this.moveToDeadLetter(delivery, statusCode, errorMsg);
       }
@@ -297,7 +279,7 @@ export class WebhookService {
     }
   }
 
-  async getFailedDeliveries(filters?: {
+  async getFailedDelveys(filters?: {
     page?: number;
     limit?: number;
     webhookId?: string;
@@ -384,8 +366,9 @@ export class WebhookService {
         }),
       ]);
 
-    const successRate = total > 0 ? (delivered / total) * 100 : 0;
-    const failureRate = total > 0 ? (failed / total) * 100 : 0;
+    const completed = delivered + failed + deadLettered;
+    const successRate = completed > 0 ? (delivered / completed) * 100 : 0;
+    const failureRate = completed > 0 ? ((failed + deadLettered) / completed) * 100 : 0;
 
     return {
       total,
