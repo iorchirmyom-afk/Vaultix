@@ -1,59 +1,18 @@
-import { ICondition, IDispute, IEscrowExtended } from "@/types/escrow";
+import {
+  ICondition,
+  IDispute,
+  IEscrowExtended,
+  IParty,
+} from "@/types/escrow";
 import type { RawEscrowExtended } from "@/types/escrow";
-import { getAccessToken } from "./session";
+import { apiClient } from "./api-client";
 import {
   CanonicalEscrowStatus,
   normalizeEscrowStatus,
 } from "@/utils/escrowStatus";
 
-const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
-
-// API version prefix
-const API_VERSION_PREFIX = "/v1";
-
-const buildApiUrl = (path: string) => {
-  if (apiBaseUrl) {
-    return `${apiBaseUrl}${API_VERSION_PREFIX}${path}`;
-  }
-
-  return `/api${API_VERSION_PREFIX}${path}`;
-};
-
-const readErrorMessage = async (response: Response) => {
-  const fallback = `Request failed with status ${response.status}`;
-
-  try {
-    const data = (await response.json()) as { message?: string | string[] };
-
-    if (Array.isArray(data.message)) {
-      return data.message.join(", ");
-    }
-
-    return data.message ?? fallback;
-  } catch {
-    return fallback;
-  }
-};
-
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(buildApiUrl(path), {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
+  return apiClient.request<T>(path, init);
 };
 
 /**
@@ -74,6 +33,39 @@ export const fetchEscrow = async (id: string): Promise<IEscrowExtended> => {
   const escrow = await request<RawEscrowExtended>(`/escrows/${id}`);
   return { ...escrow, status: normalizeEscrowStatus(escrow.status) };
 };
+
+export interface PendingPartyInvitation {
+  escrow: IEscrowExtended;
+  party: IParty;
+}
+
+type PendingInvitationResponse = Omit<IParty, "status"> & {
+  status: string;
+  escrow: RawEscrowExtended;
+};
+
+function isPendingInvitation(
+  party: PendingInvitationResponse,
+): party is PendingInvitationResponse & { status: IParty["status"] } {
+  return party.status.toUpperCase() === "PENDING";
+}
+
+export const fetchPendingPartyInvitations =
+  async (): Promise<PendingPartyInvitation[]> => {
+    const response = await request<PendingInvitationResponse[]>(
+      "/escrows/pending-invitations",
+    );
+
+    return response
+      .filter(isPendingInvitation)
+      .map(({ escrow, ...party }) => ({
+        escrow: {
+          ...escrow,
+          status: normalizeEscrowStatus(escrow.status),
+        },
+        party,
+      }));
+  };
 
 export const acceptPartyInvitation = (escrowId: string, partyId: string) =>
   request(`/escrows/${escrowId}/parties/${partyId}/accept`, {
@@ -112,28 +104,7 @@ export const uploadEvidence = async (
 ): Promise<{ cid: string; url: string }> => {
   const formData = new FormData();
   formData.append("file", file);
-
-  const token = typeof window !== "undefined" ? getAccessToken() : null;
-
-  const response = await fetch(
-    `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"}/v1/escrows/${escrowId}/evidence`,
-    {
-      method: "POST",
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: formData,
-    },
-  );
-
-  if (!response.ok) {
-    const error = await response
-      .json()
-      .catch(() => ({ message: "Upload failed" }));
-    throw new Error(error.message || `HTTP ${response.status}`);
-  }
-
-  return response.json();
+  return apiClient.post(`/escrows/${escrowId}/evidence`, formData);
 };
 
 export const fileDispute = (

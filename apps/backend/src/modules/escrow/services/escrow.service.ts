@@ -8,6 +8,16 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
+import {
+  CursorPage,
+  CursorSortOrder,
+} from '../../../common/pagination/cursor-pagination.dto';
+import {
+  buildCursorPage,
+  decodeCursor,
+  toDbDate,
+} from '../../../common/pagination/cursor-pagination.util';
+import { ListEscrowsCursorDto } from '../dto/list-escrows-cursor.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository, SelectQueryBuilder } from 'typeorm';
 import { Escrow, EscrowStatus, EscrowType } from '../entities/escrow.entity';
@@ -401,6 +411,76 @@ export class EscrowService {
     return { data, total, page, limit };
   }
 
+  async findAllCursor(
+    userId: string,
+    query: ListEscrowsCursorDto,
+  ): Promise<CursorPage<Escrow>> {
+    const limit = query.limit ?? 20;
+    const order = query.sortOrder === CursorSortOrder.ASC ? 'ASC' : 'DESC';
+    const dbType = this.escrowRepository.manager.connection.options.type;
+
+    if (query.createdFrom && query.createdTo) {
+      if (new Date(query.createdFrom) > new Date(query.createdTo)) {
+        throw new BadRequestException('createdFrom must be before createdTo');
+      }
+    }
+
+    const qb = this.escrowRepository.createQueryBuilder('escrow');
+
+    // Subquery instead of a join so each escrow is returned exactly once
+    const partyMatch =
+      'escrow.id IN (SELECT p.escrowId FROM escrow_parties p WHERE p.userId = :userId' +
+      (query.role ? ' AND p.role = :role' : '') +
+      ')';
+    if (query.role) {
+      qb.where(partyMatch, { userId, role: query.role });
+    } else {
+      qb.where(`(escrow.creatorId = :userId OR ${partyMatch})`, { userId });
+    }
+
+    if (query.status) {
+      qb.andWhere('escrow.status = :status', { status: query.status });
+    }
+    if (query.assetCode) {
+      qb.andWhere('escrow.assetCode = :assetCode', {
+        assetCode: query.assetCode,
+      });
+    }
+    if (query.assetIssuer) {
+      qb.andWhere('escrow.assetIssuer = :assetIssuer', {
+        assetIssuer: query.assetIssuer,
+      });
+    }
+    if (query.createdFrom) {
+      qb.andWhere('escrow.createdAt >= :createdFrom', {
+        createdFrom: toDbDate(new Date(query.createdFrom), dbType),
+      });
+    }
+    if (query.createdTo) {
+      qb.andWhere('escrow.createdAt <= :createdTo', {
+        createdTo: toDbDate(new Date(query.createdTo), dbType),
+      });
+    }
+
+    if (query.cursor) {
+      const { sortKey, id } = decodeCursor(query.cursor);
+      const op = order === 'ASC' ? '>' : '<';
+      const key = toDbDate(sortKey, dbType);
+      qb.andWhere(
+        `(escrow.createdAt ${op} :cursorKey OR (escrow.createdAt = :cursorKey AND escrow.id ${op} :cursorId))`,
+        { cursorKey: key, cursorId: id },
+      );
+    }
+
+    const rows = await qb
+      .orderBy('escrow.createdAt', order)
+      .addOrderBy('escrow.id', order)
+      .take(limit + 1)
+      .getMany();
+
+    return buildCursorPage(rows, limit, (row) => row.createdAt);
+  }
+
   async findOne(id: string): Promise<Escrow> {
     const escrow = await this.escrowRepository.findOne({
       where: { id },
@@ -524,11 +604,16 @@ export class EscrowService {
     });
   }
 
-  async expireBySystem(id: string, reason: string): Promise<Escrow> {
+  async expireBySystem(
+    id: string,
+    reason: string,
+    eventData: Record<string, unknown> = {},
+  ): Promise<Escrow> {
     const escrow = await this.findOne(id);
     return this.expireEscrow(escrow, {
       reason,
       webhookReason: reason,
+      eventData,
     });
   }
 
@@ -1543,6 +1628,7 @@ export class EscrowService {
       ipAddress?: string;
       reason: string;
       webhookReason: string | null;
+      eventData?: Record<string, unknown>;
     },
   ): Promise<Escrow> {
     if (isTerminalStatus(escrow.status)) {
@@ -1574,6 +1660,7 @@ export class EscrowService {
       {
         reason: options.reason,
         previousStatus: escrow.status,
+        ...options.eventData,
       },
       options.ipAddress,
     );
