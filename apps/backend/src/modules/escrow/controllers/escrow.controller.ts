@@ -18,6 +18,8 @@ import {
   FileTypeValidator,
   Res,
 } from '@nestjs/common';
+import { ListEscrowsCursorDto } from '../dto/list-escrows-cursor.dto';
+import { IdempotencyInterceptor } from '../../../common/idempotency/idempotency.interceptor';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { Response } from 'express';
@@ -90,6 +92,7 @@ export class EscrowController {
 
   @Post()
   @UseGuards(KycGuard)
+  @UseInterceptors(IdempotencyInterceptor)
   async create(
     @Body() dto: CreateEscrowDto,
     @Request() req: AuthenticatedRequest,
@@ -134,6 +137,22 @@ export class EscrowController {
   ) {
     const userId = this.getAuthenticatedUserId(req);
     return this.escrowService.findAll(userId, query);
+  }
+
+  @Get('cursor')
+  @ApiOperation({
+    summary: 'List escrows with cursor pagination',
+    description:
+      'Returns { items, nextCursor }. Pass nextCursor back as `cursor` for the next page. Sorted by createdAt then id.',
+  })
+  async findAllCursor(
+    @Query() query: ListEscrowsCursorDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.escrowService.findAllCursor(
+      this.getAuthenticatedUserId(req),
+      query,
+    );
   }
 
   @Get('overview')
@@ -244,6 +263,7 @@ export class EscrowController {
   }
 
   @Post(':id/fund')
+  @UseInterceptors(IdempotencyInterceptor)
   @UseGuards(EscrowAccessGuard)
   async fund(
     @Param('id') id: string,
@@ -261,6 +281,7 @@ export class EscrowController {
   }
 
   @Post(':id/release')
+  @UseInterceptors(IdempotencyInterceptor)
   @UseGuards(AuthGuard)
   async releaseEscrow(
     @Param('id') id: string,
@@ -402,6 +423,7 @@ export class EscrowController {
    * Transitions the escrow from ACTIVE → DISPUTED and freezes fund release.
    */
   @Post(':id/dispute')
+  @UseInterceptors(IdempotencyInterceptor)
   @UseGuards(EscrowAccessGuard)
   async fileDispute(
     @Param('id') id: string,
@@ -454,7 +476,11 @@ export class EscrowController {
    */
   @Post(':id/evidence')
   @UseGuards(EscrowAccessGuard)
-  @UseInterceptors(FilesInterceptor('files', 5))
+  @UseInterceptors(
+    FilesInterceptor('files', 5, {
+      limits: { fileSize: 10 * 1024 * 1024, files: 5 },
+    }),
+  )
   @ApiOperation({ summary: 'Upload evidence files for a dispute' })
   @ApiOkResponse({ type: UploadEvidenceResponseDto })
   async uploadEvidence(

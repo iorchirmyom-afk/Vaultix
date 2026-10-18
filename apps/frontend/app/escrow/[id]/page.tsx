@@ -3,8 +3,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { useEscrow } from "@/hooks/useEscrow";
 import { useWallet } from "@/hooks/useWallet";
+import { useWalletSession } from "@/hooks/useWalletSession";
+import { fetchPendingPartyInvitations } from "@/lib/escrow-api";
 import EscrowHeader from "@/components/escrow/detail/EscrowHeader";
 import PartiesSection from "@/components/escrow/detail/PartiesSection";
 import TermsSection from "@/components/escrow/detail/TermsSection";
@@ -17,11 +20,18 @@ import DisputeSection from "@/components/escrow/detail/DisputeSection";
 import ArbitratorResolutionModal from "@/components/escrow/detail/ArbitratorResolutionModal";
 import { EscrowDetailSkeleton } from "@/components/ui/EscrowDetailSkeleton";
 import { CanonicalEscrowStatus } from '@/utils/escrowStatus';
+import { apiClient } from "@/lib/api-client";
 
 const EscrowDetailPage = () => {
   const { id } = useParams();
   const { escrow, error, loading, refetch, isLive } = useEscrow(id as string);
   const { connected, publicKey, connect } = useWallet();
+  const { activePublicKey, canPerformProtectedActions } = useWalletSession();
+  const pendingInvitationsQuery = useQuery({
+    queryKey: ["pending-party-invitations", activePublicKey],
+    queryFn: fetchPendingPartyInvitations,
+    enabled: canPerformProtectedActions,
+  });
   
   const [userRole, setUserRole] = useState<"creator" | "counterparty" | "arbitrator" | null>(null);
   const [currentParty, setCurrentParty] = useState<IParty | null>(null);
@@ -34,12 +44,19 @@ const EscrowDetailPage = () => {
       if (escrow.creatorId === publicKey) {
         setUserRole("creator");
         setCurrentParty(null);
-      } else if (escrow.parties?.some((p) => p.userId === publicKey)) {
-        setUserRole("counterparty");
-        setCurrentParty(
-          escrow.parties.find((p) => p.userId === publicKey) ?? null,
-        );
       } else {
+        const pendingParty = pendingInvitationsQuery.data?.find(
+          (invitation) => invitation.escrow.id === escrow.id,
+        )?.party;
+        const walletParty = escrow.parties?.find(
+          (party) => party.userId === publicKey,
+        );
+        const party = pendingParty ?? walletParty ?? null;
+        if (party) {
+          setUserRole("counterparty");
+          setCurrentParty(party);
+          return;
+        }
         setUserRole(null);
         setCurrentParty(null);
       }
@@ -47,7 +64,7 @@ const EscrowDetailPage = () => {
       setUserRole(null);
       setCurrentParty(null);
     }
-  }, [escrow, publicKey]);
+  }, [escrow, publicKey, pendingInvitationsQuery.data]);
 
   const fetchDisputeData = useCallback(async () => {
     if (escrow?.status !== CanonicalEscrowStatus.DISPUTED) {
@@ -55,11 +72,8 @@ const EscrowDetailPage = () => {
       return;
     }
     try {
-      const response = await fetch(`/api/escrows/${escrow.id}/dispute`);
-      if (response.ok) {
-        const disputeData = await response.json();
-        setDispute(disputeData);
-      }
+      const disputeData = await apiClient.get(`/escrows/${escrow.id}/dispute`);
+      setDispute(disputeData);
     } catch (error) {
       console.error("Error fetching dispute details:", error);
     }
